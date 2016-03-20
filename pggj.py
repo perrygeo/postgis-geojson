@@ -3,12 +3,11 @@ import json
 
 import click
 import cligj
-from shapely.geometry import asShape, mapping
-from shapely.wkb import loads
+from shapely.geometry import asShape
 import psycopg2
 
 
-uri_arg = click.argument("uri", required=True)
+db_arg = click.option("--db", envvar='POSTGIS_GEOJSON_DB')
 where_opt = click.option("--where", required=False, default=None)
 table_arg = click.argument("table")
 
@@ -18,44 +17,43 @@ def pggj():
     pass
 
 
-@pggj.command(help="Select postgis")
-@uri_arg
-@table_arg
+@pggj.command(help="Insert features into postgis table")
+@db_arg
 @cligj.features_in_arg
-def insert(uri, table, features):
-    with psycopg2.connect(uri) as conn:
+@table_arg
+def insert(db, table, features):
+    with psycopg2.connect(db) as conn:
         with conn.cursor() as cur:
             for feature in features:
                 query = """
-                    INSERT INTO test (id, properties, geometry)
-                    VALUES (%s, %s, ST_GeomFromText(%s, 4326))"""
+                    INSERT INTO {} (id, properties, geometry)
+                    VALUES (%s, %s, ST_GeomFromText(%s, 4326))""".format(table)
                 try:
                     fid = feature['id']
                 except KeyError:
                     fid = None
-                result = cur.execute(
+                cur.execute(
                     query,
                     (fid,
                      json.dumps(feature['properties']),
                      asShape(feature['geometry']).wkt))
 
 
-@pggj.command(help="Select postgis")
-@uri_arg
+@pggj.command(help="Select features from postgis")
+@db_arg
 @table_arg
 @where_opt
-def select(uri, table, where):
-    """
-    pggj.py select $db test --where "properties->>'region_wb' ~ 'Africa'"
-    """
-    with psycopg2.connect(uri) as conn:
+def select(db, table, where):
+    with psycopg2.connect(db) as conn:
         with conn.cursor() as cur:
-            query = "SELECT id, properties, ST_AsGeoJSON(geometry, 9) FROM test"
+            query = """
+                SELECT id, properties, ST_AsGeoJSON(geometry, 9)
+                FROM {}""".format(table)
             if where:
                 # HOLY SHIT, WTF DONT DO THIS, ARE YOU ON CRACK?
-                query += " WHERE " + where
+                query += " WHERE {}".format(where)
 
-            cur.execute(query, {'table': table})
+            cur.execute(query)
             for row in cur:
                 fid = row[0]
                 properties = row[1]
@@ -71,16 +69,16 @@ def select(uri, table, where):
 
 
 @pggj.command(help="Create features table")
-@uri_arg
+@db_arg
 @table_arg
-def create(uri, table):
-    with psycopg2.connect(uri) as conn:
+def create(db, table):
+    with psycopg2.connect(db) as conn:
         with conn.cursor() as cur:
             query = """
-                CREATE TABLE test (
+                CREATE TABLE {} (
                     id varchar,
                     properties jsonb,
-                    geometry geometry(GEOMETRY,4326))"""
+                    geometry geometry(GEOMETRY,4326))""".format(table)
             cur.execute(query)
 
 
